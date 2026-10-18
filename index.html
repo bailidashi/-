@@ -371,7 +371,7 @@
           <rect x="6" y="3" width="12" height="18" rx="2.5"/>
           <path d="M9 3.5h6M9.5 21h5"/>
         </svg>
-        <span><b>长按上方图片</b>即可保存，微信发给朕，今晚就翻它。</span>
+        <span>已自动弹出「保存到相册」；没弹出来就<b>长按上方图片</b>保存。</span>
       </div>
       <div class="result-actions">
         <a class="btn gold" id="btnDownload" download="今夜翻牌.png">保存图片</a>
@@ -433,6 +433,10 @@
   function allGames(){ return BASE.concat(customs); }
 
   var state = { flipped:{}, selected:null };
+  var imgCache = {};   // 已加载牌面图缓存（提前预载，点「钦定此牌」时能立刻成图）
+  var fontsReady = (document.fonts && document.fonts.ready)
+    ? document.fonts.ready.catch(function(){ return null; })
+    : Promise.resolve(null);
   var cardsEl = document.getElementById('cards');
   var dockHint = document.getElementById('dockHint');
   var dockActions = document.getElementById('dockActions');
@@ -556,9 +560,15 @@
   btnPick.addEventListener('click', function(){
     if (state.selected === null) return;
     var g = allGames()[state.selected];
+    var filename = g.name + '-今夜翻牌.png';
     document.getElementById('resultSub').textContent = '爱妃已钦定 · 今晚就翻「' + g.name + '」';
     setView('result');
-    drawResultCard(g);
+    drawResultCard(g).then(function(blob){
+      if (!blob) return;
+      if (!shareToAlbum(blob, filename)){
+        downloadBlob(blob, filename);
+      }
+    });
   });
 
   /* ---------- 自定义面板 ---------- */
@@ -645,6 +655,13 @@
     });
   }
 
+  function getImg(url){
+    if (!imgCache[url]){
+      imgCache[url] = loadImg(url, true).catch(function(){ return null; });
+    }
+    return imgCache[url];
+  }
+
   function roundRect(ctx, x, y, w, h, r){
     ctx.beginPath();
     ctx.moveTo(x + r, y);
@@ -675,9 +692,9 @@
     var link = document.getElementById('btnDownload');
     link.download = g.name + '-今夜翻牌.png';
 
-    Promise.all([
-      g.img ? loadImg(g.img, true).catch(function(){ return null; }) : Promise.resolve(null),
-      (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve()
+    return Promise.all([
+      g.img ? getImg(g.img) : Promise.resolve(null),
+      fontsReady
     ]).then(function(res){
       var art = res[0];
       var serif = '900 "Noto Serif SC","Songti SC","STSong","SimSun",serif';
@@ -798,13 +815,39 @@
       } catch(e){
         console.warn('canvas toDataURL blocked');
       }
+      return new Promise(function(resolve){
+        try {
+          canvas.toBlob(function(blob){ resolve(blob); }, 'image/png');
+        } catch(e){ resolve(null); }
+      });
     });
+  }
+
+  function shareToAlbum(blob, filename){
+    var file = new File([blob], filename, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })){
+      navigator.share({ files: [file], title: filename }).catch(function(){});
+      return true;
+    }
+    return false;
+  }
+
+  function downloadBlob(blob, filename){
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 1000);
   }
 
   /* ---------- 启动 ---------- */
   renderCards();
   paint();
   applyView();
+  /* 预载牌面图：确保点「钦定此牌」时同步成图，不会因异步跨过手势导致保存失败 */
+  allGames().forEach(function(g){ if (g.img) getImg(g.img); });
 })();
 </script>
 </body>
